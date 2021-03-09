@@ -1,0 +1,6 @@
+- Learn to create a first person camera
+- Learn how to load 2D textures (create resources)
+- MipMap generation on Dx11
+- Learn about SRVs
+- Learn about SamplerStates (texture filtering)
+- Learn how to sample textures in shader (different sample functions TextureGrad, Gather, Sample, SampleLevel ...)

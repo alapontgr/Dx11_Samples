@@ -1,0 +1,6 @@
+- Learn affine 3D transformations (scale, rotation, translation matrices, ...). 
+- Learn how to create vertex and index buffers
+- Learn about raster state
+- Learn about viewport
+- Learn how to create a Constant Buffer and update it's contents
+- Learn how to bind resources to shader stages

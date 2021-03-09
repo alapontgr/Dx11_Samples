@@ -1,0 +1,8 @@
+- Learn how to create a Window (Windows plaform)
+- Introduction to ImGui
+- Learn about different spaces (local/world/view/clip space)
+- Introduction to shaders:
+    - Rasterization
+    - Stages
+    - ...
+- Learn how to create shader resources from source code

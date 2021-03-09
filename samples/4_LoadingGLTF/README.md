@@ -1,0 +1,2 @@
+- Use tinygltf to load GLTF 3D models
+- Simplest lighting model (Lambertian)

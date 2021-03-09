@@ -1,0 +1,3 @@
+- Learn to create a simple node hierarchy
+- Learn about parenting Model matrices
+- Start using depth attachment as we now render multiple drawcalls
