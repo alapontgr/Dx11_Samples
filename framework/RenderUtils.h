@@ -131,7 +131,7 @@ namespace framework
 		{
 			return createConstantBufferRaw(device, &cbInitialData, static_cast<u32>(sizeof(T)));
 		}
-		static bool updateMappableCBData(ID3D11DeviceContext* ctx, ID3D11Buffer* cBuffer, void* data, u32 size);
+		static bool updateMappableCBData(ID3D11DeviceContext* ctx, ID3D11Buffer* cBuffer, const void* data, u32 size);
 
 		// Texture resources
 		static bool loadTexture2D(ID3D11Device* device, ID3D11DeviceContext* ctx, const char* fileRelPath, DXGI_FORMAT format, Texture2D& outTexture);
@@ -170,4 +170,74 @@ namespace framework
 		static void drawScaleGizmo(const m4& cameraView, const m4& cameraProjection, m4& model);
 	};
 
+	class GltfScene 
+	{
+	public:
+		using MeshRenderData = framework::DebugMesh;
+
+		struct VertexBuffer0 
+		{
+			v3 m_pos;
+		};
+		struct VertexBuffer1 
+		{
+			v3 m_normal;
+			v3 m_tangent;
+			v2 m_uv;
+		};
+
+		struct SurfaceMaterial 
+		{
+			framework::Texture2D m_albedo;
+			framework::Texture2D m_normal;
+		};
+
+		struct Node 
+		{
+			m4 m_model;
+			u32 m_mesh = -1;
+		};
+
+		struct Meshlet 
+		{
+			u32 m_vertexOffset;
+			u32 m_vertexCount;
+			u32 m_indexBytesOffset; // In bytes
+			u32 m_indexCount;
+			u32 m_material;
+			bool m_isIndexShort = false;
+		};
+
+		struct Mesh 
+		{
+			Vector<Meshlet> m_meshlets;
+		};
+
+		bool loadGLTF(ID3D11Device* device, ID3D11DeviceContext* ctx,const char* fileRelPath);
+
+		ID3D11Buffer* getPackedVertexBuffer() const { return m_vertexBuffer; }
+		ID3D11Buffer* getPackedIndexBuffer() const { return m_indexBuffer; }
+		const Vector<Mesh>& getMeshes() const { return m_meshes; }
+		const Vector<SurfaceMaterial> getMaterials() const { return m_materials; }
+		const Vector<Node>& getNodes() const { return m_nodes; }
+
+		u32 getVertexBuff0OffsetBytes(const Meshlet& meshlet) const { return meshlet.m_vertexOffset * static_cast<u32>(sizeof(VertexBuffer0)); }
+		u32 getVertexBuff1OffsetBytes(const Meshlet& meshlet) const { return m_vertexBuff1OffsetBytes + meshlet.m_vertexOffset * static_cast<u32>(sizeof(VertexBuffer1)); }
+
+	private:
+
+		void setupNodeHierarchy(tinygltf::Model* gltf, s32 nodeIdx, const m4& parentModel = m4(1.0f));
+		bool setupGeometry(ID3D11Device* device, tinygltf::Model* gltf);
+		bool setupMaterials(ID3D11Device* device, ID3D11DeviceContext* ctx, tinygltf::Model* gltf);
+		String resolveTexturePath(const String& relPath) const;
+
+
+		ID3D11Buffer* m_vertexBuffer = nullptr;
+		ID3D11Buffer* m_indexBuffer = nullptr;
+		u32 m_vertexBuff1OffsetBytes; // Delta to apply to calculate offset in bytes for VertexBuff1 for each meshlet
+		Vector<Mesh> m_meshes;
+		Vector<SurfaceMaterial> m_materials;
+		Vector<Node> m_nodes;
+		String m_basePath;
+	};
 }

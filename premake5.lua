@@ -131,4 +131,5 @@ addSample("1_Draw3DCube");
 addSample("2_Texturing");
 addSample("3_Hierarchy");
 addSample("4_LoadingGLTF");
+addSample("5_Lighting");
 ----------------------------------------------------------

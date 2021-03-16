@@ -13,6 +13,7 @@
 // External utilities
 #include "external/imgui/imgui.h"
 #include "external/ImGuizmo/ImGuizmo.h"
+#include "external/tinygltf/tiny_gltf.h"
 
 // Custom framework
 #include "framework/Debug.h"

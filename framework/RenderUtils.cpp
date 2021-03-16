@@ -1,6 +1,14 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "framework/Framework.h"
 
+#pragma warning(disable:4996)
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define TINYGLTF_NO_INCLUDE_STB_IMAGE
+//#define TINYGLTF_NO_EXTERNAL_IMAGE 
+#include "external/tinygltf/tiny_gltf.h"
+#pragma warning(default:4996)
+
 namespace framework
 {
 
@@ -506,7 +514,9 @@ namespace framework
 		}
 	}
 
-	bool RenderResources::updateMappableCBData(ID3D11DeviceContext* ctx, ID3D11Buffer* cBuffer, void* data, u32 size)
+	// -----------------------------------------------------------------------------------------
+
+	bool RenderResources::updateMappableCBData(ID3D11DeviceContext* ctx, ID3D11Buffer* cBuffer, const void* data, u32 size)
 	{
 		D3D11_MAPPED_SUBRESOURCE mappedData;
 		if (FAILED(ctx->Map(cBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedData)))
@@ -774,6 +784,8 @@ namespace framework
 		return nullptr;
 	}
 
+	// -----------------------------------------------------------------------------------------
+
 	static ImGuizmo::OPERATION g_mCurrentGizmoOperation(ImGuizmo::TRANSLATE);
 	bool g_useWindow = false;
 	float g_camDistance = 1.f;
@@ -943,5 +955,391 @@ namespace framework
 		ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
 
 		ImGuizmo::Manipulate(&cameraView[0][0], &cameraProjection[0][0], ImGuizmo::SCALE, ImGuizmo::LOCAL, &model[0][0], NULL, NULL, nullptr, nullptr);
+	}
+
+	// -----------------------------------------------------------------------------------------
+
+	static String s_PosAttribName = "POSITION";
+	static String s_NormalAttribName = "NORMAL";
+	static String s_TangentAttribName = "TANGENT";
+	static String s_UvAttribName = "TEXCOORD_0";
+
+	static bool doesFileExist(const std::string &abs_filename, void *) 
+	{
+		return framework::FileUtils::doesFileExist(abs_filename.c_str());
+	}
+
+	static String expandFilePath(const std::string & relPath, void *) 
+	{
+		return framework::Paths::getAssetPath(relPath);
+	}
+
+	static bool readWholeFile(std::vector<unsigned char>* outBuffer, std::string* error, const std::string & filePath, void *)
+	{
+		HANDLE file = framework::FileUtils::openFileForRead(filePath.c_str());
+		if (file != INVALID_HANDLE_VALUE)
+		{
+			u32 fileSize = framework::FileUtils::getFileSize(file);
+			outBuffer->resize(fileSize);
+			memset(outBuffer->data(), 0, fileSize);
+			u32 bytesRead = framework::FileUtils::readBytes(file, fileSize, outBuffer->data());
+			VERIFY(bytesRead == fileSize, "Not the entire file was loaded");
+			framework::FileUtils::closeFile(file);
+			return true;
+		}
+		return false;
+	}
+
+	static bool writeWholeFile(std::string * error, const std::string & filePath, 
+		const std::vector<unsigned char> & data, void * userData)
+	{
+		// Not needed for the purpose of this example
+		return false;
+	}
+
+
+
+	bool GltfScene::loadGLTF(ID3D11Device* device, ID3D11DeviceContext* ctx,const char* fileRelPath)
+	{
+		String path(fileRelPath);
+		std::replace( path.begin(), path.end(), '\\', '/');
+		size_t pivot = path.find_last_of('/');
+		String prefixPath = "./";
+		if (pivot != String::npos) 
+		{
+			prefixPath = path.substr(0, pivot);
+		}
+
+		u32 fileSize = 0;
+		m_basePath = prefixPath;
+		String absPath = framework::Paths::getAssetPath(fileRelPath);
+		UniquePtr<char[]> gltfFileData = framework::FileUtils::loadFileContent(absPath.c_str(), fileSize);
+		if (fileSize == 0) 
+		{
+			printf("GLTF file could not be opened.");
+			return 1;
+		}
+
+		UniquePtr<tinygltf::Model> model = std::make_unique<tinygltf::Model>();
+		String error, warnings;
+		tinygltf::TinyGLTF loader;
+		tinygltf::FsCallbacks callbacks{};
+		callbacks.ExpandFilePath = &expandFilePath;
+		callbacks.ReadWholeFile = &readWholeFile;
+		callbacks.WriteWholeFile = &writeWholeFile;
+		callbacks.FileExists = &doesFileExist;
+		loader.SetFsCallbacks(callbacks);
+		if (!loader.LoadASCIIFromString(model.get(), &error, &warnings, gltfFileData.get(), fileSize, prefixPath)) 
+		{
+			printf("ERRORs: %s\n", error.c_str());
+			return false;
+		}
+		if (warnings.size()) 
+		{
+			printf("WARNINGs: %s\n", warnings.c_str());
+		}
+
+		if (model->nodes.size() > 0) 
+		{
+			setupNodeHierarchy(model.get(), 0);
+			if (!setupMaterials(device, ctx, model.get())) 
+			{
+				printf("Failed to initialize material data");
+				return false;
+			}
+			if (!setupGeometry(device, model.get())) 
+			{
+				printf("Failed to initialize geometry resources");
+				return false;
+			}
+			return true;
+		}
+		return false;
+	}
+
+	void GltfScene::setupNodeHierarchy(tinygltf::Model* gltf, s32 nodeIdx, const m4& parentModel)
+	{
+		const tinygltf::Node& gltfNode = gltf->nodes[nodeIdx];
+	
+		m4 model(1.0f);
+		if (gltfNode.matrix.size() > 0) 
+		{
+			model = glm::make_mat4(gltfNode.matrix.data());
+		}
+		else 
+		{
+			if (gltfNode.rotation.size() > 0) 
+			{
+				model = model * glm::mat4_cast(quat((float)gltfNode.rotation[3], (float)gltfNode.rotation[0], (float)gltfNode.rotation[1], (float)gltfNode.rotation[2]));
+			}
+			if (gltfNode.scale.size() > 0) 
+			{
+				model = model * glm::scale(m4(1.0f), v3(gltfNode.scale[0], gltfNode.scale[1], gltfNode.scale[2]));
+			}
+			if (gltfNode.translation.size() > 0) 
+			{
+				model = model * glm::translate(m4(1.0f), v3(gltfNode.translation[0], gltfNode.translation[1], gltfNode.translation[2]));
+			}
+		}
+
+		if (gltfNode.mesh >= 0) 
+		{
+			m_nodes.push_back(Node());
+			Node& node = m_nodes[m_nodes.size() - 1];
+			node.m_mesh = static_cast<u32>(gltfNode.mesh);
+			node.m_model = model;
+		}
+
+		for (const s32 idx : gltfNode.children) 
+		{
+			setupNodeHierarchy(gltf, idx, model);
+		}
+	}
+
+	template<typename AttribT>
+	static inline void readAttribData(tinygltf::Model* gltf, AttribT* dst, u32 expectedStride, u32 vertexIdx, const tinygltf::Accessor& accesor)
+	{
+		const tinygltf::BufferView& view = gltf->bufferViews[accesor.bufferView];
+		u32 stride = static_cast<u32>(glm::max(expectedStride, static_cast<u32>(view.byteStride)));
+		unsigned char* src = gltf->buffers[view.buffer].data.data() + accesor.byteOffset + view.byteOffset;
+		src += stride * vertexIdx;
+		*dst = *(reinterpret_cast<AttribT*>(src));
+	}
+
+	bool GltfScene::setupGeometry(ID3D11Device* device, tinygltf::Model* gltf) 
+	{
+		// Do two iterations:
+		// 0: Resolve required sizes and offsets
+		// 1: Copy data to buffers
+
+		m_meshes.resize(gltf->meshes.size());
+		u32 vertexCount(0);
+		u32 indexBufferSize(0);
+		for (u32 meshIdx = 0; meshIdx < static_cast<u32>(gltf->meshes.size()); meshIdx++)
+		{
+			const tinygltf::Mesh& gltfMesh = gltf->meshes[meshIdx];
+			const std::vector<tinygltf::Primitive>& prims = gltfMesh.primitives;
+			Mesh& mesh = m_meshes[meshIdx];
+			mesh.m_meshlets.resize(prims.size());
+			for (u32 meshletIdx = 0; meshletIdx < static_cast<u32>(prims.size()); ++meshletIdx) 
+			{
+				const tinygltf::Primitive& prim = prims[meshletIdx];
+				VERIFY(prim.mode == TINYGLTF_MODE_TRIANGLES, "Make sure the primitive is a triangle list");
+
+				Meshlet& meshlet = mesh.m_meshlets[meshletIdx];
+				meshlet.m_indexBytesOffset = indexBufferSize;// Offset in bytes (will be used when binding index buffer)
+				meshlet.m_vertexOffset = vertexCount;
+				meshlet.m_material = prim.material;
+				// Find index count
+				const tinygltf::Accessor& indexAccesor = gltf->accessors[prim.indices];
+				meshlet.m_indexCount = static_cast<u32>(indexAccesor.count);
+				// Use 16bit indices when the component type is either byte (we will convert this to u16) or unsigned short
+				meshlet.m_isIndexShort = (indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_SHORT) ||
+					(indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) ||
+					(indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_BYTE) ||
+					(indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE);
+				indexBufferSize += (meshlet.m_isIndexShort ? 2 : 4) * meshlet.m_indexCount;
+				indexBufferSize += (indexBufferSize % 4) != 0 ? 2 : 0; // Guarantee alignment of 4 bytes (alignof(int))
+
+				// Find out the number of vertices
+				const auto posIt = prim.attributes.find(s_PosAttribName);
+				if (posIt != prim.attributes.end()) // Guaranteed every mesh will have at least this attribute
+				{
+					const tinygltf::Accessor& posAccesor = gltf->accessors[posIt->second];
+					VERIFY(posAccesor.type == TINYGLTF_TYPE_VEC3 && posAccesor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT, "Format for pos not supported");
+					meshlet.m_vertexCount = static_cast<u32>(posAccesor.count);
+					vertexCount += static_cast<u32>(posAccesor.count);
+				}
+			}
+		}
+
+		m_vertexBuff1OffsetBytes = vertexCount * static_cast<u32>(sizeof(VertexBuffer0)); // Used to calculate offsets correctly during rendering
+
+		// Allocate data for unified buffer memory
+		static u32 s_vertexSize = static_cast<u32>(sizeof(VertexBuffer0) + sizeof(VertexBuffer1));
+		u32 vertexDataReqSpace = s_vertexSize * vertexCount;
+		UniquePtr<char[]> vertexBufferData = UniquePtr<char[]>(new char[vertexDataReqSpace]);
+		UniquePtr<char[]> indexBufferData = UniquePtr<char[]>(new char[indexBufferSize]);
+		VertexBuffer0* buff0Data = reinterpret_cast<VertexBuffer0*>(vertexBufferData.get());
+		VertexBuffer1* buff1Data = reinterpret_cast<VertexBuffer1*>(buff0Data + vertexCount);
+		char* indexBuffData = reinterpret_cast<char*>(indexBufferData.get());
+
+		for (u32 meshIdx = 0; meshIdx < static_cast<u32>(gltf->meshes.size()); meshIdx++)
+		{
+			const tinygltf::Mesh& gltfMesh = gltf->meshes[meshIdx];
+			const std::vector<tinygltf::Primitive>& prims = gltfMesh.primitives;
+			Mesh& mesh = m_meshes[meshIdx];
+			mesh.m_meshlets.resize(prims.size());
+			for (u32 meshletIdx = 0; meshletIdx < static_cast<u32>(prims.size()); ++meshletIdx) 
+			{
+				const tinygltf::Primitive& prim = prims[meshletIdx];
+				Meshlet& meshlet = mesh.m_meshlets[meshletIdx];
+
+				// Copy index data
+				{
+					const tinygltf::Accessor& indexAccesor = gltf->accessors[prim.indices];
+					const tinygltf::BufferView& view = gltf->bufferViews[indexAccesor.bufferView];
+					bool isInteger = (indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) || (indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_INT);
+					bool isShort = (indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) || (indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_SHORT);
+					bool isByte = (indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) || (indexAccesor.componentType == TINYGLTF_COMPONENT_TYPE_BYTE);
+					unsigned char* src = gltf->buffers[view.buffer].data.data() + indexAccesor.byteOffset + view.byteOffset;
+					char* dst = indexBuffData + meshlet.m_indexBytesOffset;
+					if (isInteger || isShort)
+					{
+						u32 stride = static_cast<u32>(view.byteStride);
+						if (stride)
+						{
+							u32 bytesToCopy = isInteger ? 4 : 2;
+							for (u32 i = 0; i < indexAccesor.count; ++i)
+							{
+								memcpy(dst, src, bytesToCopy);
+								src += stride;
+								dst += bytesToCopy;
+							}
+						}
+						else
+						{
+							u32 bytesToCopy = (isInteger ? 4 : 2) * static_cast<u32>(indexAccesor.count);
+							memcpy(dst, src, bytesToCopy);
+						}
+					}
+					else if (isByte)
+					{
+						// Special conversion needed
+						u32 stride = static_cast<u32>(view.byteStride);
+						stride = glm::max(stride, 1u);
+						for (u32 i = 0; i < indexAccesor.count; ++i)
+						{
+							u16 element = static_cast<char>(src[0]);
+							memcpy(dst, &element, 2);
+							src += stride;
+						}
+					}
+				}
+
+				// Fill the data for Vertex Buffer 0
+				{
+					VertexBuffer0* meshletBuff0 = buff0Data + meshlet.m_vertexOffset;
+					const auto posIt = prim.attributes.find(s_PosAttribName);
+					if (posIt != prim.attributes.end())
+					{
+						const tinygltf::Accessor& posAccesor = gltf->accessors[posIt->second];
+						const tinygltf::BufferView& view = gltf->bufferViews[posAccesor.bufferView];
+
+						unsigned char* src = gltf->buffers[view.buffer].data.data() + posAccesor.byteOffset + view.byteOffset;
+						u32 bytesToCopy = static_cast<u32>(sizeof(v3));
+						if (view.byteStride) 
+						{
+							for (u32 i=0; i<posAccesor.count; ++i) 
+							{
+								meshletBuff0[i].m_pos = *(reinterpret_cast<v3*>(src));
+								src += view.byteStride;
+							}
+						}
+						else 
+						{						
+							memcpy(&meshletBuff0[0].m_pos[0], src, bytesToCopy * meshlet.m_vertexCount);
+						}
+					}
+				}
+
+				// Fill the data for Vertex Buffer 1
+				{
+					VertexBuffer1* meshletBuff1 = buff1Data + meshlet.m_vertexOffset;
+					const auto normalIt = prim.attributes.find(s_NormalAttribName);
+					const auto uvIt = prim.attributes.find(s_UvAttribName);
+					const auto tangentIt = prim.attributes.find(s_TangentAttribName);
+					for (u32 i=0; i<meshlet.m_vertexCount; ++i) 
+					{
+						// Fill normals
+						meshletBuff1[i].m_normal = v3(0.0f, 0.0f, 1.0f);
+						if (normalIt != prim.attributes.end()) 
+						{
+							const tinygltf::Accessor& accesor = gltf->accessors[normalIt->second];
+							VERIFY(accesor.type == TINYGLTF_TYPE_VEC3 && accesor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT, "Format for normal not supported");
+							readAttribData<v3>(gltf, &meshletBuff1[i].m_normal, static_cast<u32>(sizeof(v3)), i, accesor);
+						}
+
+						// Fill Uvs
+						meshletBuff1[i].m_uv = v3(0.0f);
+						if (uvIt != prim.attributes.end()) 
+						{
+							const tinygltf::Accessor& accesor = gltf->accessors[uvIt->second];
+							VERIFY(accesor.type == TINYGLTF_TYPE_VEC2 && accesor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT, "Format for uv not supported");
+							readAttribData<v2>(gltf, &meshletBuff1[i].m_uv, static_cast<u32>(sizeof(v2)), i, accesor);
+						}
+
+						// Fill tangents
+						meshletBuff1[i].m_tangent = v3(0.0f);
+						if (tangentIt != prim.attributes.end()) 
+						{
+							const tinygltf::Accessor& accesor = gltf->accessors[tangentIt->second];
+							VERIFY((accesor.type == TINYGLTF_TYPE_VEC3 || accesor.type == TINYGLTF_TYPE_VEC4) && accesor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT, "Format for tangent not supported");
+							u32 dataStride = (accesor.type == TINYGLTF_TYPE_VEC3) ? static_cast<u32>(sizeof(v3)) : static_cast<u32>(sizeof(v4));
+							readAttribData<v3>(gltf, &meshletBuff1[i].m_tangent, dataStride, i, accesor);
+						}
+						else if(m_materials[meshlet.m_material].m_normal.m_SRV)
+						{
+							printf("The material used has a normal map but the geometry lacks tangents.\n");
+						}
+					}
+				}
+
+			} // End iterate meshlets
+		} // End iterate meshes
+
+		m_vertexBuffer = framework::RenderResources::createVertexBuffer(device, vertexDataReqSpace, vertexBufferData.get());
+		m_indexBuffer = framework::RenderResources::createIndexBuffer(device, indexBufferSize, indexBufferData.get());
+
+		return (m_vertexBuffer && m_indexBuffer);
+	}
+
+	bool GltfScene::setupMaterials(ID3D11Device* device, ID3D11DeviceContext* ctx, tinygltf::Model* gltf) 
+	{
+		m_materials.resize(gltf->materials.size());
+		for (u32 i = 0; i < static_cast<u32>(gltf->materials.size()); ++i) 
+		{
+			const tinygltf::Material& gltfMat = gltf->materials[i];
+			SurfaceMaterial& material = m_materials[i];
+			// Albedo
+			{
+				s32 albedoIdx = gltfMat.pbrMetallicRoughness.baseColorTexture.index;
+				if (albedoIdx >= 0) 
+				{
+					const tinygltf::Image& albedoImg = gltf->images[gltf->textures[albedoIdx].source];
+					material.m_albedo.m_name = resolveTexturePath(albedoImg.uri);
+					u32 texelSize = albedoImg.component;
+					DXGI_FORMAT format = albedoImg.component == 4 ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+					if(!framework::RenderResources::createTexture2D(device, ctx, albedoImg.width, albedoImg.height, texelSize, format, albedoImg.image.data(), material.m_albedo))
+					{
+						printf("Failed to create albedo\n");
+						return false;
+					}
+				}
+			}
+
+			// Normal map
+			{
+				s32 normalIdx = gltfMat.normalTexture.index;
+				if (normalIdx >= 0) 
+				{
+					const tinygltf::Image& img = gltf->images[gltf->textures[normalIdx].source];
+					material.m_normal.m_name = resolveTexturePath(img.uri);
+					u32 texelSize = img.component;
+					DXGI_FORMAT format = img.component == 4 ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_B8G8R8X8_UNORM;
+					if(!framework::RenderResources::createTexture2D(device, ctx, img.width, img.height, texelSize, format, img.image.data(), material.m_normal))
+					{
+						printf("Failed to create normal map\n");
+						return false;
+					}
+				}
+			}
+		}
+		return true;
+	}
+
+	inline String GltfScene::resolveTexturePath(const String& relPath) const
+	{
+		return m_basePath + "/" + relPath;
 	}
 }

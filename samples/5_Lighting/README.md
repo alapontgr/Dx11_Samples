@@ -1,0 +1,4 @@
+- Learn the basis of simple lighting using Blinn Phong
+- Directional light
+- Point light
+- Spot light

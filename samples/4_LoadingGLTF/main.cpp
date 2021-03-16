@@ -1,13 +1,5 @@
 #include "framework/framework.h"
 
-#pragma warning(disable:4996)
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define TINYGLTF_NO_INCLUDE_STB_IMAGE
-//#define TINYGLTF_NO_EXTERNAL_IMAGE 
-#include "external/tinygltf/tiny_gltf.h"
-#pragma warning(default:4996)
-
 #define ENABLE_DEVICE_DEBUG true
 
 struct FrameDataCB
