@@ -36,9 +36,9 @@ cbuffer FrameCB : register(b0)
 	float3 spotLightPos;
 	float spotLightOuterCone; // cos of angle
 	float3 spotLightDir;
-	float pad1;
+	float spotLightInnerRadius;
 	float3 spotLightColor;
-	float pad2;
+	float spotLightOuterRadius;
 };
 
 cbuffer DrawcallCB : register(b1)

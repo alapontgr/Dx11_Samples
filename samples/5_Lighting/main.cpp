@@ -12,9 +12,9 @@ struct FrameDataCB
 	v3 mainLightColor;
 	
 	// Point
-	f32 pointLightInnerRadius;
+	f32 pointLightRadius;
 	v3 pointLightPos;
-	f32 pointLightOuterRadius;
+	f32 pad1;
 	v3 pointLightColor;
 
 	// Spot
@@ -108,7 +108,7 @@ int main(int argc, char** argv)
 	const u32 width = 1280;
 	const u32 height = 720;
 	static framework::Window s_window(argc, argv);
-	s_window.init("4_LoadingGLTF", width, height, true, false, ENABLE_DEVICE_DEBUG);
+	s_window.init("5_Lighting", width, height, true, false, ENABLE_DEVICE_DEBUG);
 	ID3D11Device* device = s_window.getDevice();
 	ID3D11DeviceContext* ctx = s_window.getCtx();
 
@@ -135,9 +135,6 @@ int main(int argc, char** argv)
 	framework::FirstPersonCamera fpCam;
 
 	v3 camPos(0.0f, 5.0f, 20.0f);
-	f32 rotSpeed = 10.0f;
-	v2 uvOffset(0.0f);
-	v2 uvScale(1.0f);
 
 	fpCam.init(camPos, v3(0.0f), 10, 10.0f);
 	fpCam.setPerspective(60.0f, f32(width) / f32(height), 1.0f, 1000.0f);
@@ -146,16 +143,21 @@ int main(int argc, char** argv)
 	frameCBData.view = fpCam.getView();
 	frameCBData.viewProj = fpCam.getViewProj();
 	frameCBData.invViewProj = fpCam.getInvViewProj();
+
+	v3 mainLightColor = v3(1.0f);
+	f32 mainLightIntensity = 1.0f;
 	{
 		m4 lightModel = glm::yawPitchRoll(glm::radians(45.0f), 0.0f, glm::radians(45.0f)) * glm::translate(m4(1.0f), v3(0.0f, 3.0f, -3.0f));
 		frameCBData.lightDir = glm::normalize((m3)lightModel * v3(0.0f, -1.0f, 0.0f));
+		frameCBData.mainLightColor = mainLightIntensity * mainLightColor;
 	}
 	frameCBData.pointLightPos = v3(0.0f, 1.0f, 0.0f);
-	frameCBData.pointLightInnerRadius = 1.0f;
-	frameCBData.pointLightOuterRadius = 1.5f;
-	frameCBData.pointLightColor = v3(1.0f);
+	frameCBData.pointLightRadius = 3.0f;
+	f32 pointLightIntensity = 1.0f;
+	frameCBData.pointLightColor = v3(pointLightIntensity);
 
-	frameCBData.spotLightColor = v3(1.0f);
+	f32 spotLightIntensity = 1.0f;
+	frameCBData.spotLightColor = v3(spotLightIntensity);
 	frameCBData.spotLightInnerCone = glm::cos(glm::radians(15.0f));
 	frameCBData.spotLightOuterCone = glm::cos(glm::radians(30.0f));
 	frameCBData.spotLightInnerRadius = 2.0f;
@@ -272,19 +274,33 @@ int main(int argc, char** argv)
 				ImGui::RadioButton("Rotation", &s_editTransformationIdx, 1);
 			}
 			ImGui::Separator();
-			if (s_editLightIdx == 1) // Point
+			switch (s_editLightIdx) 
 			{
-				ImGui::SliderFloat("Point light inner", &frameCBData.pointLightInnerRadius, 0.0f, frameCBData.pointLightOuterRadius);
-				ImGui::SliderFloat("Point light outer", &frameCBData.pointLightOuterRadius, 0.0f, 20.0f);
-				ImGui::ColorEdit3("Point light color", &frameCBData.pointLightColor[0]);
-				frameCBData.pointLightInnerRadius = glm::min(frameCBData.pointLightInnerRadius, frameCBData.pointLightOuterRadius);
-				frameCBData.pointLightOuterRadius = glm::max(frameCBData.pointLightInnerRadius, frameCBData.pointLightOuterRadius);
+			case 0:
+			{
+				ImGui::ColorEdit3("Main light color", &mainLightColor[0]);
+				ImGui::InputFloat("Main light intensity", &mainLightIntensity);
+				frameCBData.mainLightColor = mainLightColor * mainLightIntensity;
 			}
-			else if (s_editLightIdx == 2) // Spot
+			break;
+			case 1:
 			{
+				v3 color = frameCBData.pointLightColor / pointLightIntensity;
+
+				ImGui::SliderFloat("Point light radius", &frameCBData.pointLightRadius, 0.0f, 20.0f);
+				ImGui::ColorEdit3("Point light color", &color[0]);
+				ImGui::SliderFloat("Point Light Intensity", &pointLightIntensity, 0.01f, 10.0f);
+				frameCBData.pointLightRadius = glm::max(frameCBData.pointLightRadius, 0.0f);
+				frameCBData.pointLightColor = color * pointLightIntensity;
+			}
+			break;
+			case 2:
+			{
+				v3 color = frameCBData.spotLightColor / spotLightIntensity;
+
 				ImGui::SliderFloat("Spot light inner radius", &frameCBData.spotLightInnerRadius, 0.0f, frameCBData.spotLightOuterRadius);
 				ImGui::SliderFloat("Spot light outer radius", &frameCBData.spotLightOuterRadius, 0.0f, 20.0f);
-				ImGui::ColorEdit3("Spot light color", &frameCBData.spotLightColor[0]);
+				ImGui::ColorEdit3("Spot light color", &color[0]);
 				f32 innerAngle = glm::degrees(glm::acos(frameCBData.spotLightInnerCone));
 				f32 outerAngle = glm::degrees(glm::acos(frameCBData.spotLightOuterCone));
 				ImGui::SliderFloat("Spot inner angle", &innerAngle, 0.0f, outerAngle);
@@ -293,6 +309,11 @@ int main(int argc, char** argv)
 				frameCBData.spotLightOuterRadius = glm::max(frameCBData.spotLightInnerRadius, frameCBData.spotLightOuterRadius);
 				frameCBData.spotLightInnerCone = glm::cos(glm::radians(glm::min(innerAngle, outerAngle)));
 				frameCBData.spotLightOuterCone = glm::cos(glm::radians(glm::max(outerAngle, innerAngle)));
+				frameCBData.spotLightColor = color * spotLightIntensity;
+			}
+			break;
+			default:
+				break;
 			}
 
 			ImGui::Separator();
@@ -422,12 +443,8 @@ int main(int argc, char** argv)
 				break;
 			case 1:
 			{
-				m4 model = glm::scale(m4(1.0f), v3(frameCBData.pointLightInnerRadius));
+				m4 model = glm::scale(m4(1.0f), v3(frameCBData.pointLightRadius));
 				model[3] = v4(frameCBData.pointLightPos, 1.0f);
-				drawDebugPrim(ctx, model, drawcallCB, debugSphere);
-				model[0][0] = frameCBData.pointLightOuterRadius;
-				model[1][1] = frameCBData.pointLightOuterRadius;
-				model[2][2] = frameCBData.pointLightOuterRadius;
 				drawDebugPrim(ctx, model, drawcallCB, debugSphere);
 			}
 			break;
