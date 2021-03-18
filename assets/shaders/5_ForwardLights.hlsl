@@ -22,6 +22,8 @@ cbuffer FrameCB : register(b0)
     float4x4 view;
     float4x4 viewProj;
     float4x4 invViewProj;
+    float3 camPosWS;
+    float pd00;
     float3 lightDir;
     float pad0;
 	float3 mainLightColor;
@@ -37,9 +39,9 @@ cbuffer FrameCB : register(b0)
 	float3 spotLightPos;
 	float spotLightOuterCone; // cos of angle
 	float3 spotLightDir;
-	float spotLightInnerRadius;
+	float spotLightRadius;
 	float3 spotLightColor;
-	float spotLightOuterRadius;
+    float pad2;
 };
 
 cbuffer DrawcallCB : register(b1)
@@ -70,17 +72,17 @@ float getSquareFalloffAttenuation(float3 posToLight, float lightInvRadius) {
     return (smoothFactor * smoothFactor) / max(distanceSquare, 1e-4);
 }
 
-float getSpotAngleAttenuation(float3 l, float3 lightDir, float innerAngle, float outerAngle) 
+float getSpotAngleAttenuation(float3 l, float3 lightDir, float cosInnerAngle, float cosOuterAngle) 
 {
-    // the scale and offset computations can be done CPU-side
-    float cosOuter = cos(outerAngle);
-    float spotScale = 1.0 / max(cos(innerAngle) - cosOuter, 1e-4);
-    float spotOffset = -cosOuter * spotScale;
+    float spotScale = 1.0 / max(cosInnerAngle - cosOuterAngle, 1e-4);
+    float spotOffset = -cosOuterAngle * spotScale;
 
     float cd = dot(normalize(-lightDir), l);
     float attenuation = clamp(cd * spotScale + spotOffset, 0.0, 1.0);
     return attenuation * attenuation;
 }
+
+static float s_Shininess = 16.0f;
 
 float4 mainFS(FS_INPUT input) : SV_Target
 {
@@ -90,16 +92,39 @@ float4 mainFS(FS_INPUT input) : SV_Target
     float3 ambient = float3(1.0f, 1.0f, 1.0f) * 0.1f;
 
     float3 lighting = float3(0.0f, 0.0f, 0.0f);
+    
+    float3 N = normalize(input.normal);
+    float3 V = normalize(camPosWS - input.posWS);
+
     // Dir light
+    float3 L = normalize(-lightDir);
     float NdotL = max(dot(input.normal, -lightDir), 0.0f);
+    float H = normalize(L + V);
+
     lighting += NdotL * mainLightColor;
 
     // Point light
     float3 posToPoint = pointLightPos - input.posWS;
-    float3 LPoint = normalize(posToPoint);
-    NdotL = max(0.0f, dot(LPoint, input.normal));
+    L = normalize(posToPoint);
+    H = normalize(L + V);
+    NdotL = max(0.0f, dot(L, N));
+    float3 specular = pointLightColor * pow(max(0.0f, dot(N, H)), s_Shininess);
+
     float attenPoint = getSquareFalloffAttenuation(posToPoint, 1.0f / pointLightRadius);
-    lighting += attenPoint * NdotL * pointLightColor;
+    lighting += attenPoint * NdotL * (pointLightColor + specular);
+
+    // Spot light
+    float3 posToSpot = spotLightPos - input.posWS;
+    float3 dir = normalize(spotLightDir);
+    L = normalize(posToSpot);
+    H = normalize(L + V);
+    NdotL = max(0.0f, dot(L, N));
+    specular = spotLightColor * pow(max(0.0f, dot(N, H)), s_Shininess);
+
+    float attenSpot = getSquareFalloffAttenuation(posToSpot, 1.0f / spotLightRadius);
+    attenSpot *= getSpotAngleAttenuation(dir, L, spotLightInnerCone, spotLightOuterCone);
+
+    lighting += attenSpot * NdotL * (spotLightColor + specular);
 
     float3 color = albedo * (ambient + lighting);
     return float4(color, 1.0f);

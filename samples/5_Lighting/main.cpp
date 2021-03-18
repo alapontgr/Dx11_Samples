@@ -7,6 +7,9 @@ struct FrameDataCB
 	m4 view;
 	m4 viewProj;
 	m4 invViewProj;
+	v3 camPosWS;
+    f32 pd00;
+	// Lights
 	v3 lightDir;
 	f32 pad0;
 	v3 mainLightColor;
@@ -22,9 +25,9 @@ struct FrameDataCB
 	v3 spotLightPos;
 	f32 spotLightOuterCone; // cos of angle
 	v3 spotLightDir;
-	f32 spotLightInnerRadius;
+	f32 spotLightRadius;
 	v3 spotLightColor;
-	f32 spotLightOuterRadius;
+	f32 pad2;
 };
 
 struct DrawcallDataCB 
@@ -143,6 +146,7 @@ int main(int argc, char** argv)
 	frameCBData.view = fpCam.getView();
 	frameCBData.viewProj = fpCam.getViewProj();
 	frameCBData.invViewProj = fpCam.getInvViewProj();
+	frameCBData.camPosWS = fpCam.getPos();
 
 	v3 mainLightColor = v3(1.0f);
 	f32 mainLightIntensity = 1.0f;
@@ -160,9 +164,13 @@ int main(int argc, char** argv)
 	frameCBData.spotLightColor = v3(spotLightIntensity);
 	frameCBData.spotLightInnerCone = glm::cos(glm::radians(15.0f));
 	frameCBData.spotLightOuterCone = glm::cos(glm::radians(30.0f));
-	frameCBData.spotLightInnerRadius = 2.0f;
-	frameCBData.spotLightOuterRadius = 3.5f;
-	frameCBData.spotLightPos = v3(0.0f, 2.0f, 0.0f);
+	frameCBData.spotLightRadius = 3.0f;
+	frameCBData.spotLightPos = v3(4.0f, 2.0f, 0.0f);
+	frameCBData.spotLightDir = v3(0.0f, -1.0f, 0.0f);
+	m4 spotModelNoScale = glm::rotate(m4(1.0f), glm::radians(90.0f), v3(1.0f, 0.0f, 0.0f));
+	spotModelNoScale[3] = v4(frameCBData.spotLightPos, 1.0f);
+
+	m4 lightModel = glm::yawPitchRoll(glm::radians(45.0f), 0.0f, glm::radians(45.0f)) * glm::translate(m4(1.0f), v3(0.0f, 3.0f, -3.0f));
 
 	ID3D11Buffer* frameCB = framework::RenderResources::createConstantBuffer<FrameDataCB>(device, frameCBData);
 	if (!frameCB) 
@@ -238,10 +246,6 @@ int main(int argc, char** argv)
 	const Vector<framework::GltfScene::Node>& nodes = scene->getNodes();
 	const Vector<framework::GltfScene::SurfaceMaterial>& materials = scene->getMaterials();
 
-	m4 lightModel = glm::yawPitchRoll(glm::radians(45.0f), 0.0f, glm::radians(45.0f)) * glm::translate(m4(1.0f), v3(0.0f, 3.0f, -3.0f));
-	m4 spotModelNoScale = glm::rotate(m4(1.0f), glm::radians(90.0f), v3(1.0f, 0.0f, 0.0f));
-	spotModelNoScale[3] = v4(0.0f, 2.0f, 0.0f, 1.0f);
-
 	// Start frames
 	while (s_window.update())
 	{
@@ -287,9 +291,9 @@ int main(int argc, char** argv)
 			{
 				v3 color = frameCBData.pointLightColor / pointLightIntensity;
 
-				ImGui::SliderFloat("Point light radius", &frameCBData.pointLightRadius, 0.0f, 20.0f);
+				ImGui::InputFloat("Point light radius", &frameCBData.pointLightRadius);
 				ImGui::ColorEdit3("Point light color", &color[0]);
-				ImGui::SliderFloat("Point Light Intensity", &pointLightIntensity, 0.01f, 10.0f);
+				ImGui::InputFloat("Point Light Intensity", &pointLightIntensity);
 				frameCBData.pointLightRadius = glm::max(frameCBData.pointLightRadius, 0.0f);
 				frameCBData.pointLightColor = color * pointLightIntensity;
 			}
@@ -298,15 +302,13 @@ int main(int argc, char** argv)
 			{
 				v3 color = frameCBData.spotLightColor / spotLightIntensity;
 
-				ImGui::SliderFloat("Spot light inner radius", &frameCBData.spotLightInnerRadius, 0.0f, frameCBData.spotLightOuterRadius);
-				ImGui::SliderFloat("Spot light outer radius", &frameCBData.spotLightOuterRadius, 0.0f, 20.0f);
+				ImGui::InputFloat("Spot light inner radius", &frameCBData.spotLightRadius);
 				ImGui::ColorEdit3("Spot light color", &color[0]);
+				ImGui::InputFloat("Spot Light Intensity", &spotLightIntensity);
 				f32 innerAngle = glm::degrees(glm::acos(frameCBData.spotLightInnerCone));
 				f32 outerAngle = glm::degrees(glm::acos(frameCBData.spotLightOuterCone));
 				ImGui::SliderFloat("Spot inner angle", &innerAngle, 0.0f, outerAngle);
 				ImGui::SliderFloat("Spot outer angle", &outerAngle, 0.0f, 89.9f);
-				frameCBData.spotLightInnerRadius = glm::min(frameCBData.spotLightInnerRadius, frameCBData.spotLightOuterRadius);
-				frameCBData.spotLightOuterRadius = glm::max(frameCBData.spotLightInnerRadius, frameCBData.spotLightOuterRadius);
 				frameCBData.spotLightInnerCone = glm::cos(glm::radians(glm::min(innerAngle, outerAngle)));
 				frameCBData.spotLightOuterCone = glm::cos(glm::radians(glm::max(outerAngle, innerAngle)));
 				frameCBData.spotLightColor = color * spotLightIntensity;
@@ -363,7 +365,7 @@ int main(int argc, char** argv)
 		frameCBData.view = view;
 		frameCBData.viewProj = fpCam.getViewProj();;
 		frameCBData.invViewProj = fpCam.getInvViewProj();
-
+		frameCBData.camPosWS = fpCam.getPos();
 		
 		// --------------------------------
 
@@ -453,13 +455,9 @@ int main(int argc, char** argv)
 				m4 translation = glm::translate(m4(1.0f), (v3)spotModelNoScale[3]);
 				m4 rot = spotModelNoScale;
 				rot[3] = v4(0.0f, 0.0f, 0.0f, 1.0f);
-				m4 model = translation * rot * getSpotlightScale(glm::acos(frameCBData.spotLightInnerCone), frameCBData.spotLightInnerRadius);
+				m4 model = translation * rot * getSpotlightScale(glm::acos(frameCBData.spotLightInnerCone), frameCBData.spotLightRadius);
 				drawDebugPrim(ctx, model, drawcallCB, debugCone);
-				model = translation * rot * getSpotlightScale(glm::acos(frameCBData.spotLightInnerCone), frameCBData.spotLightOuterRadius);
-				drawDebugPrim(ctx, model, drawcallCB, debugCone);
-				model = translation * rot * getSpotlightScale(glm::acos(frameCBData.spotLightOuterCone), frameCBData.spotLightInnerRadius);
-				drawDebugPrim(ctx, model, drawcallCB, debugCone);
-				model = translation * rot * getSpotlightScale(glm::acos(frameCBData.spotLightOuterCone), frameCBData.spotLightOuterRadius);
+				model = translation * rot * getSpotlightScale(glm::acos(frameCBData.spotLightOuterCone), frameCBData.spotLightRadius);
 				drawDebugPrim(ctx, model, drawcallCB, debugCone);
 			}
 			break;

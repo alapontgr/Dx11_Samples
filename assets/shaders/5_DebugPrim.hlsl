@@ -21,14 +21,16 @@ cbuffer FrameCB : register(b0)
     float4x4 view;
     float4x4 viewProj;
     float4x4 invViewProj;
+    float3 camPosWS;
+    float pd00;
     float3 lightDir;
     float pad0;
 	float3 mainLightColor;
 	
 	// Point
-	float pointLightInnerRadius;
+	float pointLightRadius;
 	float3 pointLightPos;
-	float pointLightOuterRadius;
+	float pad1;
 	float3 pointLightColor;
 
 	// Spot
