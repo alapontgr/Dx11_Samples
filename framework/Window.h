@@ -64,7 +64,7 @@ namespace framework
 		//https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
 		static bool isKeyDown(Keys key);
 
-	private:
+	protected:
 
 		static constexpr u32 s_BackBufferCount = 3;
 

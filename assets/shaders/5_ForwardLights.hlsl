@@ -82,7 +82,7 @@ float getSpotAngleAttenuation(float3 l, float3 lightDir, float cosInnerAngle, fl
     return attenuation * attenuation;
 }
 
-static float s_Shininess = 16.0f;
+static float s_Shininess = 128.0f;
 
 float4 mainFS(FS_INPUT input) : SV_Target
 {
@@ -99,17 +99,15 @@ float4 mainFS(FS_INPUT input) : SV_Target
     // Dir light
     float3 L = normalize(-lightDir);
     float NdotL = max(dot(input.normal, -lightDir), 0.0f);
-    float H = normalize(L + V);
-
     lighting += NdotL * mainLightColor;
 
     // Point light
     float3 posToPoint = pointLightPos - input.posWS;
     L = normalize(posToPoint);
-    H = normalize(L + V);
+    float3 H = normalize(L + V);
     NdotL = max(0.0f, dot(L, N));
     float3 specular = pointLightColor * pow(max(0.0f, dot(N, H)), s_Shininess);
-
+    
     float attenPoint = getSquareFalloffAttenuation(posToPoint, 1.0f / pointLightRadius);
     lighting += attenPoint * NdotL * (pointLightColor + specular);
 
