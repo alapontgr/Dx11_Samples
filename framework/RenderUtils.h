@@ -73,6 +73,12 @@ namespace framework
 			const char* entryFS,
 			D3D11_INPUT_ELEMENT_DESC* vertexAttributes, u32 vertexAttribCount);
 
+		bool createGraphicsPipeline(ID3D11Device* device,
+			const char* src, const size_t srcSize,
+			const char* entryVS,
+			const char* entryFS,
+			D3D11_INPUT_ELEMENT_DESC* vertexAttributes, u32 vertexAttribCount);
+
 		void bind(ID3D11DeviceContext* ctx);
 
 	private:
@@ -182,7 +188,7 @@ namespace framework
 		struct VertexBuffer1 
 		{
 			v3 m_normal;
-			v3 m_tangent;
+			v4 m_tangent;
 			v2 m_uv;
 		};
 
@@ -190,6 +196,7 @@ namespace framework
 		{
 			framework::Texture2D m_albedo;
 			framework::Texture2D m_normal;
+			u32 m_hash;
 		};
 
 		struct Node 
@@ -211,6 +218,12 @@ namespace framework
 		struct Mesh 
 		{
 			Vector<Meshlet> m_meshlets;
+		};
+
+		enum MaterialHashFlags 
+		{
+			NormalMap = 0,
+			COUNT
 		};
 
 		bool loadGLTF(ID3D11Device* device, ID3D11DeviceContext* ctx,const char* fileRelPath);

@@ -4,6 +4,71 @@
 
 // -----------------------------------------------------------------------------------------------
 
+UberShader::UberShader() 
+	: m_lastRetrievedHash(0)
+	, m_lastRetrievedShader(nullptr)
+{
+}
+
+void UberShader::addVariant(u32 hash, UniquePtr<framework::ShaderPipeline>&& variant) 
+{
+	m_shaderCache[hash] = std::move(variant);
+}
+
+framework::ShaderPipeline* UberShader::getShader(u32 hash) 
+{
+	if (hash && m_lastRetrievedHash == hash) 
+	{
+		return m_lastRetrievedShader;
+	}
+	auto entry = m_shaderCache.find(hash);
+	if (entry != m_shaderCache.end()) 
+	{
+		m_lastRetrievedHash = hash;
+		m_lastRetrievedShader = entry->second.get();
+		return m_lastRetrievedShader;
+	}
+	return nullptr;
+}
+
+bool UberShader::uberize(ID3D11Device* device,
+		const String& src, 
+		const String* keywords, u32 keywordCount,
+		const char* entryVS,
+		const char* entryFS,
+		D3D11_INPUT_ELEMENT_DESC* vertexAttributes, u32 vertexAttribCount) 
+{
+	u32 combinationsCount = 1 << keywordCount;
+	String defines("");
+	String shaderFinalSrc;
+
+	for (u32 i = 0; i < combinationsCount; ++i) 
+	{
+		u32 hash = 0;
+		defines = "";
+		u32 bitCount = static_cast<u32>(glm::ceil(glm::log2(static_cast<f32>(i)))) + 1;
+		for (u32 j=0; j<bitCount; ++j) 
+		{
+			if ((i & (1 << j)) != 0) 
+			{
+				hash |= (1<<j);
+				defines += "#define " + keywords[j] + " 1 \n";
+			}
+		}
+
+		shaderFinalSrc = defines + src;
+		UniquePtr<framework::ShaderPipeline> shader = std::make_unique<framework::ShaderPipeline>();
+		if (!shader->createGraphicsPipeline(device, shaderFinalSrc.c_str(), shaderFinalSrc.size(), entryVS, entryFS, vertexAttributes, vertexAttribCount)) 
+		{
+			return false;
+		}
+		addVariant(hash, std::move(shader));
+	}
+	return true;
+}
+
+// -----------------------------------------------------------------------------------------------
+
 bool loadShader(ID3D11Device* device, const char* relPath, framework::ShaderPipeline& outShader) 
 {
 	static constexpr u32 s_vertexAttribCount = 4;
@@ -22,7 +87,7 @@ bool loadShader(ID3D11Device* device, const char* relPath, framework::ShaderPipe
 	vertexLayout[1].InstanceDataStepRate = D3D11_INPUT_PER_VERTEX_DATA;
 	
 	vertexLayout[2].SemanticName = "TANGENT";
-	vertexLayout[2].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+	vertexLayout[2].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 	vertexLayout[2].InputSlot = 1;
 	vertexLayout[2].AlignedByteOffset = u32(offsetof(framework::GltfScene::VertexBuffer1, m_tangent));
 	vertexLayout[2].InstanceDataStepRate = D3D11_INPUT_PER_VERTEX_DATA;
@@ -33,6 +98,53 @@ bool loadShader(ID3D11Device* device, const char* relPath, framework::ShaderPipe
 	vertexLayout[3].AlignedByteOffset = u32(offsetof(framework::GltfScene::VertexBuffer1, m_uv));
 	vertexLayout[3].InstanceDataStepRate = D3D11_INPUT_PER_VERTEX_DATA;
 	return outShader.loadGraphicsPipeline(device, relPath, "mainVS", "mainFS", vertexLayout, s_vertexAttribCount);
+}
+
+bool loadSurfaceShader(ID3D11Device* device, const char* relPath, UberShader& outShader) 
+{
+	static constexpr u32 s_vertexAttribCount = 4;
+	D3D11_INPUT_ELEMENT_DESC vertexLayout[s_vertexAttribCount];
+	ZeroMemory(vertexLayout, s_vertexAttribCount * sizeof(D3D11_INPUT_ELEMENT_DESC));
+	vertexLayout[0].SemanticName = "POSITION";
+	vertexLayout[0].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+	vertexLayout[0].InputSlot = 0;
+	vertexLayout[0].AlignedByteOffset = u32(offsetof(framework::GltfScene::VertexBuffer0, m_pos));
+	vertexLayout[0].InstanceDataStepRate = D3D11_INPUT_PER_VERTEX_DATA;
+	
+	vertexLayout[1].SemanticName = "NORMAL";
+	vertexLayout[1].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+	vertexLayout[1].InputSlot = 1;
+	vertexLayout[1].AlignedByteOffset = u32(offsetof(framework::GltfScene::VertexBuffer1, m_normal));
+	vertexLayout[1].InstanceDataStepRate = D3D11_INPUT_PER_VERTEX_DATA;
+	
+	vertexLayout[2].SemanticName = "TANGENT";
+	vertexLayout[2].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	vertexLayout[2].InputSlot = 1;
+	vertexLayout[2].AlignedByteOffset = u32(offsetof(framework::GltfScene::VertexBuffer1, m_tangent));
+	vertexLayout[2].InstanceDataStepRate = D3D11_INPUT_PER_VERTEX_DATA;
+
+	vertexLayout[3].SemanticName = "TEXCOORD";
+	vertexLayout[3].Format = DXGI_FORMAT_R32G32_FLOAT;
+	vertexLayout[3].InputSlot = 1;
+	vertexLayout[3].AlignedByteOffset = u32(offsetof(framework::GltfScene::VertexBuffer1, m_uv));
+	vertexLayout[3].InstanceDataStepRate = D3D11_INPUT_PER_VERTEX_DATA;
+
+	static const u32 s_keywordCount = 2;
+	static String s_keywords[] = 
+	{
+		"NORMAL_MAPPING",
+		"DEBUG_NORMALS"
+	};
+
+	String absPath = framework::Paths::getAssetPath(relPath);
+	UniquePtr<char[]> hlslSrc = framework::FileUtils::loadFileContent(absPath.c_str());
+	size_t srcSize = strlen(hlslSrc.get());
+	if (!hlslSrc)
+	{
+		return false;
+	}
+
+	return outShader.uberize(device, hlslSrc.get(), s_keywords, s_keywordCount, "mainVS", "mainFS", vertexLayout, s_vertexAttribCount);
 }
 
 static void updateFrameCB(ID3D11DeviceContext* ctx, ID3D11Buffer* cBuffer, const FrameDataCB& frameData) 
@@ -134,6 +246,9 @@ void App::doGui(DebugConfig& config)
 			}
 
 			ImGui::Separator();
+
+			ImGui::CheckboxFlags("NormalMapping enabled", &config.m_renderingFeaturesMask, 1 << framework::GltfScene::NormalMap);
+			ImGui::CheckboxFlags("Debug normals", &config.m_renderingFeaturesMask, s_DebugNormalsFlag);
 			ImGui::End();
 		}
 
@@ -222,7 +337,7 @@ s32 App::init()
 	Window::init("5_Lighting", width, height, true, false, ENABLE_DEVICE_DEBUG);
 
 	// Init shaders
-	if (!loadShader(m_device, "./shaders/5_ForwardLights.hlsl", m_surfaceShader)) 
+	if (!loadSurfaceShader(m_device, "./shaders/5_ForwardLights.hlsl", m_surfaceShader)) 
 	{
 		printf("Failed to load and create shader");
 		return 1;
@@ -401,7 +516,7 @@ s32 App::run()
 		updateFrameCB(m_ctx, m_frameCB, m_frameCBData);
 
 		// Bind shaders and draw batches
-		m_surfaceShader.bind(m_ctx);
+		framework::ShaderPipeline* currShader = nullptr;
 		m_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		m_ctx->VSSetConstantBuffers(0, 1, &m_frameCB);
 		m_ctx->PSSetConstantBuffers(0, 1, &m_frameCB);
@@ -425,11 +540,35 @@ s32 App::run()
 						meshlet.m_indexBytesOffset);
 
 					const framework::GltfScene::SurfaceMaterial& mat = materials[meshlet.m_material];
-					if (mat.m_albedo.m_SRV) 
+
+					u32 hash = debugConfig.m_renderingFeaturesMask & mat.m_hash;
+					if ((debugConfig.m_renderingFeaturesMask & s_DebugNormalsFlag) != 0) 
 					{
-						m_ctx->PSSetSamplers(0, 1, &m_samplers);
-						m_ctx->PSSetShaderResources(0, 1, &mat.m_albedo.m_SRV);
+						hash |= s_DebugNormalsFlag;
 					}
+
+					framework::ShaderPipeline* shader = m_surfaceShader.getShader(hash); // See how the hash is generated and how we uberize the shader
+					VERIFY(shader, "Trying to access null shader");
+					if (shader != currShader) 
+					{
+						currShader = shader;
+						currShader->bind(m_ctx);
+					}
+
+					ID3D11ShaderResourceView* views[] =	{nullptr, nullptr};
+					u32 texToBind = 0;
+
+					if (mat.m_albedo.m_SRV) 
+					{						
+						views[texToBind++] = mat.m_albedo.m_SRV;
+					}
+					if (mat.m_normal.m_SRV) 
+					{
+						views[texToBind++] = mat.m_normal.m_SRV;
+					}
+
+					m_ctx->PSSetSamplers(0, 1, &m_samplers);
+					m_ctx->PSSetShaderResources(0, texToBind, views);
 
 					m_ctx->DrawIndexed(meshlet.m_indexCount, 0, 0);
 				}

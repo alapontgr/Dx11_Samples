@@ -5,7 +5,7 @@ struct VS_INPUT
 {
     float3 pos : POSITION;
     float3 normal : NORMAL;
-    float2 tangent : TANGENT;
+    float4 tangent : TANGENT;
     float2 uv : TEXCOORD0;
 };
 
@@ -14,6 +14,9 @@ struct FS_INPUT
     float4 pos : SV_POSITION;
     float3 posWS : POSWS;
     float3 normal : NORMAL;
+//#ifdef NORMAL_MAPPING
+    float4 tangent : TANGENT;
+//#endif
     float2 uv : TEXCOORD0;
 };
 
@@ -52,17 +55,9 @@ cbuffer DrawcallCB : register(b1)
 SamplerState bilinearSampler : register(s0);
 Texture2D tex_albedo : register(t0);
 
-FS_INPUT mainVS(VS_INPUT input)
-{
-    FS_INPUT output;
-
-    float4x4 modelViewProj = mul(viewProj, model);
-    output.normal = input.normal;
-    output.pos = mul(modelViewProj, float4(input.pos, 1.0f));
-    output.posWS = mul(model, float4(input.pos, 1.0f)).xyz;
-    output.uv = input.uv;
-    return output;
-}
+#ifdef NORMAL_MAPPING
+Texture2D tex_normal : register(t1);
+#endif
 
 // Obtained from Filament (https://google.github.io/filament/Filament.html#lighting/directlighting/punctuallights)
 float getSquareFalloffAttenuation(float3 posToLight, float lightInvRadius) {
@@ -82,6 +77,21 @@ float getSpotAngleAttenuation(float3 l, float3 lightDir, float cosInnerAngle, fl
     return attenuation * attenuation;
 }
 
+FS_INPUT mainVS(VS_INPUT input)
+{
+    FS_INPUT output;
+
+    float4x4 modelViewProj = mul(viewProj, model);
+    output.normal = normalize(mul((float3x3)model, input.normal));
+    output.pos = mul(modelViewProj, float4(input.pos, 1.0f));
+    output.posWS = mul(model, float4(input.pos, 1.0f)).xyz;
+    output.uv = input.uv;
+#ifdef NORMAL_MAPPING
+    output.tangent = float4(normalize(mul((float3x3)model, input.tangent.xyz)), input.tangent.w);
+#endif
+    return output;
+}
+
 static float s_Shininess = 128.0f;
 
 float4 mainFS(FS_INPUT input) : SV_Target
@@ -93,12 +103,22 @@ float4 mainFS(FS_INPUT input) : SV_Target
 
     float3 lighting = float3(0.0f, 0.0f, 0.0f);
     
-    float3 N = normalize(input.normal);
+    float3 N = input.normal;
+
+#ifdef NORMAL_MAPPING
+    float3 normal = normalize(tex_normal.Sample(bilinearSampler, input.uv).rgb * 2.0f - 1.0f);
+    float3x3 TBN = transpose(float3x3(
+        input.tangent.xyz,
+        cross(N, input.tangent.xyz) * input.tangent.w,
+        N));
+    N = mul(TBN, normal);
+#endif
+
     float3 V = normalize(camPosWS - input.posWS);
 
     // Dir light
     float3 L = normalize(-lightDir);
-    float NdotL = max(dot(input.normal, -lightDir), 0.0f);
+    float NdotL = max(dot(N, -lightDir), 0.0f);
     lighting += NdotL * mainLightColor;
 
     // Point light
@@ -125,5 +145,9 @@ float4 mainFS(FS_INPUT input) : SV_Target
     lighting += attenSpot * NdotL * (spotLightColor + specular);
 
     float3 color = albedo * (ambient + lighting);
+#if defined(DEBUG_NORMALS)
+    return float4(N * 0.5 + 0.5, 1.0f);
+#else // Default
     return float4(color, 1.0f);
+#endif
 }

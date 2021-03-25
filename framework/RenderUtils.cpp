@@ -497,6 +497,51 @@ namespace framework
 		return true;
 	}
 
+	bool ShaderPipeline::createGraphicsPipeline(ID3D11Device* device, const char* src, const size_t srcSize, const char* entryVS, const char* entryFS, D3D11_INPUT_ELEMENT_DESC* vertexAttributes, u32 vertexAttribCount)
+	{
+		ID3DBlob* errorMSG = nullptr;
+		// Load vertex shader
+		{
+			ID3DBlob* vertexShaderBlob;
+			HRESULT res = D3DCompile(src, srcSize, NULL, NULL, NULL, entryVS, "vs_5_0", 0, 0, &vertexShaderBlob, &errorMSG);
+			if (FAILED(res))
+			{
+				OutputDebugStringA((char*)errorMSG->GetBufferPointer());
+				errorMSG->Release();
+				return false;
+			}
+			if (device->CreateVertexShader(vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize(), NULL, &m_vertexShader) != S_OK)
+			{
+				vertexShaderBlob->Release();
+				return false;
+			}
+			res = device->CreateInputLayout(vertexAttributes, vertexAttribCount, vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize(), &m_layout);
+			if (FAILED(res))
+			{
+				return false;
+			}
+		}
+
+		// Load Fragment/Pixel shader
+		{
+			ID3DBlob* pixelShaderBlob;
+			HRESULT res = D3DCompile(src, srcSize, NULL, NULL, NULL, "mainFS", "ps_5_0", 0, 0, &pixelShaderBlob, &errorMSG);
+			if (FAILED(res))
+			{
+				OutputDebugStringA((char*)errorMSG->GetBufferPointer());
+				errorMSG->Release();
+				return false;
+			}
+			if (device->CreatePixelShader(pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize(), NULL, &m_fragmentShader) != S_OK)
+			{
+				pixelShaderBlob->Release();
+				return false;
+			}
+			pixelShaderBlob->Release();
+		}
+		return true;
+	}
+
 	void ShaderPipeline::bind(ID3D11DeviceContext* ctx)
 	{
 		if (m_layout)
@@ -1039,9 +1084,13 @@ namespace framework
 			printf("WARNINGs: %s\n", warnings.c_str());
 		}
 
-		if (model->nodes.size() > 0) 
+		if (model->scenes.size() > 0) 
 		{
-			setupNodeHierarchy(model.get(), 0);
+			const tinygltf::Scene& scene = model->scenes[0];
+			for (s32 idx : scene.nodes) 
+			{
+				setupNodeHierarchy(model.get(), idx);
+			}
 			if (!setupMaterials(device, ctx, model.get())) 
 			{
 				printf("Failed to initialize material data");
@@ -1270,18 +1319,74 @@ namespace framework
 						}
 
 						// Fill tangents
-						meshletBuff1[i].m_tangent = v3(0.0f);
-						if (tangentIt != prim.attributes.end()) 
-						{
-							const tinygltf::Accessor& accesor = gltf->accessors[tangentIt->second];
-							VERIFY((accesor.type == TINYGLTF_TYPE_VEC3 || accesor.type == TINYGLTF_TYPE_VEC4) && accesor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT, "Format for tangent not supported");
-							u32 dataStride = (accesor.type == TINYGLTF_TYPE_VEC3) ? static_cast<u32>(sizeof(v3)) : static_cast<u32>(sizeof(v4));
-							readAttribData<v3>(gltf, &meshletBuff1[i].m_tangent, dataStride, i, accesor);
-						}
-						else if(m_materials[meshlet.m_material].m_normal.m_SRV)
-						{
-							printf("The material used has a normal map but the geometry lacks tangents.\n");
-						}
+						meshletBuff1[i].m_tangent = v4(0.0f);
+						//if (tangentIt != prim.attributes.end()) 
+						//{
+						//	const tinygltf::Accessor& accesor = gltf->accessors[tangentIt->second];
+						//	VERIFY((accesor.type == TINYGLTF_TYPE_VEC4) && accesor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT, "Format for tangent not supported");
+						//	u32 dataStride = static_cast<u32>(sizeof(v4));
+						//	readAttribData<v4>(gltf, &meshletBuff1[i].m_tangent, dataStride, i, accesor);
+						//}
+						//else if(m_materials[meshlet.m_material].m_normal.m_SRV)
+						//{
+						//	printf("The material used has a normal map but the geometry lacks tangents.\n");
+						//}
+					}
+				}
+
+				// Compute tangents
+				{
+					static constexpr f32 s_MinFloat = 1.0e-6f;
+					Vector<v3> bitangents;
+					bitangents.resize(meshlet.m_vertexCount, v3(0.0f));
+
+					char* indices = indexBuffData + meshlet.m_indexBytesOffset;
+					u16* indexAsShort = reinterpret_cast<u16*>(indices);
+					u32* indexAsUint = reinterpret_cast<u32*>(indices);
+					u32 indexCount = meshlet.m_indexCount;
+					VertexBuffer0* meshletBuff0 = buff0Data + meshlet.m_vertexOffset;
+					VertexBuffer1* meshletBuff1 = buff1Data + meshlet.m_vertexOffset;
+					for (u32 i = 0; i < indexCount; i += 3) 
+					{
+						u32 idx0 = meshlet.m_isIndexShort ? static_cast<u32>(indexAsShort[i]) : indexAsUint[i];
+						u32 idx1 = meshlet.m_isIndexShort ? static_cast<u32>(indexAsShort[i+1]) : indexAsUint[i+1];
+						u32 idx2 = meshlet.m_isIndexShort ? static_cast<u32>(indexAsShort[i+2]) : indexAsUint[i+2];
+
+						const VertexBuffer0& v00 = meshletBuff0[idx0];
+						const VertexBuffer0& v10 = meshletBuff0[idx1];
+						const VertexBuffer0& v20 = meshletBuff0[idx2];
+						VertexBuffer1& v01 = meshletBuff1[idx0];
+						VertexBuffer1& v11 = meshletBuff1[idx1];
+						VertexBuffer1& v21 = meshletBuff1[idx2];
+						v3 edge10 = v10.m_pos - v00.m_pos;
+						v3 edge20 = v20.m_pos - v00.m_pos;
+						v2 uvEdge10 = v11.m_uv - v01.m_uv;
+						v2 uvEdge20 = v21.m_uv - v01.m_uv;
+						f32 determinant = (uvEdge10.y * uvEdge20.x) - (uvEdge10.x * uvEdge20.y);
+						determinant = (glm::abs(determinant) < s_MinFloat) ? 0.0001f : (1.0f / determinant);
+
+						v3 tangent = (edge20 * uvEdge10.y - edge10 * uvEdge20.y) * determinant;
+						v3 bitangent = (edge20 * uvEdge10.x - edge10 * uvEdge20.x) * determinant;
+
+						tangent = (glm::length2(tangent) < s_MinFloat) ? v3(1.0f, 0.0f, 0.0f) : glm::normalize(tangent);
+						bitangent = (glm::length2(bitangent) < s_MinFloat) ? v3(0.0f, 1.0f, 0.0f) : glm::normalize(bitangent);
+
+						v01.m_tangent += v4(tangent, 0.0f);
+						v11.m_tangent += v4(tangent, 0.0f);
+						v21.m_tangent += v4(tangent, 0.0f);
+						bitangents[idx0] += bitangent;
+						bitangents[idx1] += bitangent;
+						bitangents[idx2] += bitangent;
+					}
+
+					for (u32 i = 0; i < meshlet.m_vertexCount; ++i) 
+					{
+						VertexBuffer1& vert = meshletBuff1[i];
+						const v3& normal = vert.m_normal;
+						v3 tangent = (glm::length2(vert.m_tangent) < s_MinFloat) ? v3(1.0f, 0.0f, 0.0f) : glm::normalize(vert.m_tangent);
+						v3 bitangent = (glm::length2(bitangents[i]) < s_MinFloat) ? v3(0.0f, 1.0f, 0.0f) : glm::normalize(bitangents[i]);
+						const f32 w = (glm::dot(glm::cross(normal, tangent), bitangent) < 0.0f) ? 1.0f : -1.0f;
+						vert.m_tangent = v4(tangent, w);
 					}
 				}
 
@@ -1332,6 +1437,7 @@ namespace framework
 						printf("Failed to create normal map\n");
 						return false;
 					}
+					material.m_hash |= (1<<GltfScene::NormalMap);
 				}
 			}
 		}

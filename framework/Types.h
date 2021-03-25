@@ -13,6 +13,7 @@
 #include "external/glm/glm.hpp"
 #include "external/glm/gtx/euler_angles.hpp"
 #include "external/glm/gtc/quaternion.hpp"
+#include <external/glm/gtx/norm.hpp>
 #include <external/glm/gtc/type_ptr.hpp>
 
 using s8 = int8_t;

@@ -35,11 +35,37 @@ struct DrawcallDataCB
 	m4 m_model;
 };
 
+static constexpr u32 s_DebugNormalsFlag = 1 << framework::GltfScene::COUNT;
+
 struct DebugConfig 
 {
 	bool m_editLights = true;
 	s32 m_editLightIdx = 1; // Pointlight by default
 	s32 m_editTransformationIdx = 0; // 0: Translation, 1: Rotation
+	u32 m_renderingFeaturesMask = (1<<framework::GltfScene::NormalMap); // Default: Normal mapping enabled
+};
+
+class UberShader 
+{
+public:
+	UberShader();
+
+	void addVariant(u32 hash, UniquePtr<framework::ShaderPipeline>&& variant);
+
+	bool uberize(ID3D11Device* device,
+		const String& src, 
+		const String* keywords, u32 keywordCount,
+		const char* entryVS,
+		const char* entryFS,
+		D3D11_INPUT_ELEMENT_DESC* vertexAttributes, u32 vertexAttribCount);
+
+	framework::ShaderPipeline* getShader(u32 hash);
+
+private:
+
+	UMap<u32, UniquePtr<framework::ShaderPipeline>> m_shaderCache;
+	u32 m_lastRetrievedHash;
+	framework::ShaderPipeline* m_lastRetrievedShader;
 };
 
 class App : public framework::Window
@@ -57,7 +83,7 @@ public:
 
 private:
 
-	framework::ShaderPipeline m_surfaceShader;
+	UberShader m_surfaceShader;
 	framework::ShaderPipeline m_debugPrimShader;
 
 	framework::DebugMesh m_debugSphere;
